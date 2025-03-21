@@ -11,15 +11,60 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <libpq-fe.h> 
+#include <pthread.h>
 
 #define PORT 8080
 #define BUFF_SIZE 1024
 
-void process_transaction(char *request, char *response) {
+typedef struct {
+    int sock;
+} ThreadArgs;
+
+PGconn* connect_db() {
+    PGconn* connection = PQconnectdb("dbname=transaction_db user=postgres password=2612lfDF host=localhost");
+    if (PQstatus(connection) != CONNECTION_OK) {
+        fprintf(stderr, "Connection Error: %s\n", PQerrorMessage(connection));
+    }
+    return connection;
+}
+
+void save_transaction(PGconn *connection, char* card_number, int amount, char *status){
+    char query[256];
+    snprintf(
+        query,
+        sizeof(query),
+        "INSERT INTO transactions (card_number, amount, status) VALUES ('%s','%d','%s')",
+        card_number, amount, status
+    );
+    PGresult *result = PQexec(connection, query);
+
+    if (PQresultStatus(result) != PGRES_COMMAND_OK){
+        fprintf(stderr, "Error executin query: %s\n", PQerrorMessage(connection));
+        return;
+    }
+
+    PQclear(result);
+}
+
+int is_valid_card_number(const char *card_number) {
+    if (strlen(card_number) != 16) {
+        return 0;  // Not exactly 16 digits
+    }
+    for (int i = 0; i < 16; i++) {
+        if (card_number[i] < '0' || card_number[i] > '9') {
+            return 0;  // Non numerical char
+        }
+    }
+    return 1;  // Valid
+}
+
+void process_transaction(char *request, char *response, PGconn *connection) {
     char card_number[17];
     int amount;
+    char status[3];
 
-    if (sscanf(request, "0100|%16[^|]|%d", card_number, &amount) != 2) {
+    if (sscanf(request, "0100|%16[^|]|%d", card_number, &amount) != 2 || !is_valid_card_number(card_number)) {
         sprintf(response, "Error: Incorrect Format");
         return;
     }
@@ -28,10 +73,16 @@ void process_transaction(char *request, char *response) {
 
     // Simulate simple validation
     if (amount > 50000) { 
-        sprintf(response, "05|Transaction Denied"); // CODE ISO 8583 "05" = Denied
+        strcpy(status, "05"); // CODE ISO 8583 "05" = Denied
     } else {
-        sprintf(response, "00|Transaction Approved"); // CODE ISO 8583 "00" = Approved
+        strcpy(status, "00"); // CODE ISO 8583 "00" = Approved
     }
+
+    sprintf(response, "%s|Transaction %s", status, (strcmp(status, "00") == 0) ? "Approved" : "Denied");
+    // sscanf(response, "%s|Transaction %s", status, (strcmp(status, "00") == 0) ? "Approved" : "Denied");
+
+    //Store in Database
+    save_transaction(connection, card_number, amount, status);
 }
 
 char* recv_request(int sock) {
@@ -42,35 +93,20 @@ char* recv_request(int sock) {
         exit(EXIT_FAILURE);
     }
     memset(request, 0, BUFF_SIZE);
-    int total_bytes_recv = 0;
-    int bytes_recv;
 
-    while ((bytes_recv = recv(sock, request + total_bytes_recv, BUFF_SIZE - total_bytes_recv - 1, 0)) > 0){
-        total_bytes_recv += bytes_recv;
-    }
-
-    if (bytes_recv < 0) {
-        perror("Error receiving request");
-        close(sock);
-        exit(EXIT_FAILURE);
-    }
-    if (total_bytes_recv == 0) {
-        printf("Client closed the connection.\n");
-        free(request);
-        close(sock);
-        return NULL;
-    }
-    request[total_bytes_recv] = '\0';
+    int msg_len;
+    recv(sock, &msg_len, sizeof(msg_len), 0);  // Recibir tamaño del mensaje
+    recv(sock, request, msg_len, 0);  // Recibir mensaje
 
     printf("Message received: %s\n", request);
-
+    
     return request;
 }
 
-void send_response(int sock, char* request) {
+void send_response(int sock, char* request, PGconn *connection) {
     // -- Extract Data from transaction and Simulate response
     char response[BUFF_SIZE];
-    process_transaction(request, response);
+    process_transaction(request, response, connection);
 
     // -- Send response to client
 
@@ -89,6 +125,27 @@ void send_response(int sock, char* request) {
 
     printf("Response sent: %s\n", response);
 
+}
+
+void* handle_client(void *args){
+    ThreadArgs *thread_args = (ThreadArgs*) args;
+    int sock = thread_args->sock;
+    free(thread_args);
+
+    //Connecting to Postgre database
+    PGconn *connection = connect_db();
+
+    char* request = recv_request(sock);
+    if (request != NULL) {
+        send_response(sock, request, connection);
+        free(request);
+    }
+
+    close(sock);
+
+    //Close connection with database
+    PQfinish(connection);
+    pthread_exit(NULL);
 }
 
 int main() {
@@ -127,16 +184,16 @@ int main() {
         int sock = accept(server, (struct sockaddr *)&address, &addrlen);
         if (sock < 0) {
             perror("Error en accept");
-            exit(EXIT_FAILURE);
+            continue;
         }
         printf("New connection accepted\n");
 
-        char* request = recv_request(sock);
-        if (request != NULL) {
-            send_response(sock, request);
-            free(request);
-        }
-        close(sock);
+        ThreadArgs *args = malloc(sizeof(ThreadArgs));
+        args->sock = sock;
+
+        pthread_t thread;
+        pthread_create(&thread, NULL, handle_client, args);
+        pthread_detach(thread);
     }
 
     return 0;
