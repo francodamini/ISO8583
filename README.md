@@ -1,10 +1,13 @@
-# ISO8583
+franco@Franco: /mnt/c/Users/franc/Proyectos/ISO8583$
+code .
 
-Learning ISO8583 concepts
 
-## Client
+sudo service postgresql start
+sudo -u postgres psql
+\c transaction_db
 
---Ask user for card number and amount
---With that data, create de ISO 8583 msg
---Connect to server using TCP Sockets
---Send msg and wait for response
+TRUNCATE TABLE transactions RESTART IDENTITY;
+
+gcc Server.c -o Server -lpq -I/usr/include/postgresql
+
+gcc Client.c -o Client

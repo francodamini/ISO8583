@@ -72,7 +72,7 @@ void process_transaction(char *request, char *response, PGconn *connection) {
     printf("Received Transaction -> Card: %s, Amount: %d\n", card_number, amount);
 
     // Simulate simple validation
-    if (amount > 50000) { 
+    if (amount > 5000) { 
         strcpy(status, "05"); // CODE ISO 8583 "05" = Denied
     } else {
         strcpy(status, "00"); // CODE ISO 8583 "00" = Approved

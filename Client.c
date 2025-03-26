@@ -12,10 +12,10 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 
-#define BUFF_SIZE 1024
+#define BUFF_SIZE 4096
 #define SERVER_IP "127.0.0.1"
 #define SERVER_PORT 8080
-#define AMOUNT_OF_CLIENTS 3
+#define AMOUNT_OF_CLIENTS 5
 
 typedef struct {
     char card_number[17];
@@ -33,12 +33,12 @@ transactionData user_data(int client_id) {
         client_id, client_id, client_id, client_id
     );
     t.card_number[16] = '\0';
-    t.amount = (rand() % 10000) + 1000; // Random amount between 1000 and 100000
+    t.amount = (rand() % 1000) + 1000; // Random amount between 1000 and 10000
 return t;
 }
 
 void build_iso8583_msg(char* buff, transactionData t) {
-    sprintf(buff, "0100|%s|%d", t.card_number, t.amount);
+    snprintf(buff, BUFF_SIZE, "0100|%s|%d", t.card_number, t.amount);
 }
 
 int server_connection(){
@@ -127,7 +127,7 @@ int main() {
         *client_id = i + 1;
 
         pthread_create(&clients[i], NULL, client_thread, client_id);
-        usleep(500000); //Avoid output collisions
+        // usleep(500000); //Avoid output collisions
     }
 
     for (int i = 0; i < AMOUNT_OF_CLIENTS; i++){
