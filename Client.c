@@ -33,7 +33,7 @@ transactionData user_data(int client_id) {
         client_id, client_id, client_id, client_id
     );
     t.card_number[16] = '\0';
-    t.amount = (rand() % 1000) + 1000; // Random amount between 1000 and 10000
+    t.amount = (rand() % 10000) + 1;
 return t;
 }
 
